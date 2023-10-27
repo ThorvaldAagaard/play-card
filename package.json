@@ -1,0 +1,25 @@
+{
+  "name": "play-card",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && npx webpack --config webpack.config.js",
+    "watch": "tsc --watch",
+    "http-server": "http-server"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "copy-webpack-plugin": "^11.0.0",
+    "ts-loader": "^9.4.4",
+    "typescript": "^5.2.2",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.12.0",
+    "node-gyp": "^9.4.0"
+  }
+}
