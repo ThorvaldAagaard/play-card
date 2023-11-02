@@ -37,6 +37,7 @@ export class Board {
      * @returns An instance of the class.
      */
     constructor(boardNumber: string, pbn: string, dealer: string, vulnerability: string, contract: string, bidding: string, plays: string[], rules: string[]) {
+        this.bot = new Bot();
         this.boardNumber = boardNumber;
         this.dealer = dealer;
         this.vulnerability = vulnerability;
@@ -52,7 +53,10 @@ export class Board {
         this.ns_tricks = 0;
         this.rules = rules;
         this.lastTrickPBN = this.toPBN();
-        this.bot = new Bot();
+    }
+    
+    async modelsLoaded() {
+        await this.bot.initializeModels()
     }
 
     getScore() {
@@ -148,7 +152,7 @@ export class Board {
             throw 'Played out of turn';
         }
         const holding = this.cards[player][card.suit];
-        //console.log(card.rank)
+        
         let rank: number = card.rank;
 
         let idx = holding.indexOf(rank);
@@ -205,6 +209,7 @@ export class Board {
         } else {
             this.ew_tricks++;
         }
+        console.log("Trick ",this.tricks.length, " won by: ",winner)
         this.lastTrickPBN = this.toPBN();
     }
 
@@ -229,18 +234,34 @@ export class Board {
     }
 
     // Interface to dds.js
-    nextPlay(): Card {
+    async nextPlay(): Promise<Card> {
         let played = this.playedCards()
         let position = (played.length % 4) + 1
         let isDeclarer = (this.getDeclarer() == this.player) || (this.getDummy() == this.player)
         const result1 = (window as any).getNextPlay(this.lastTrickPBN, this.strain, played) as NextPlayResult;
-        //console.log(result1)
-
-        if (isDeclarer) {
-            // Switch the opponents hands and find the cards to play
-            //const result2 = (window as any).getNextPlay(this.toPBNReversed(position), this.strain, played) as NextPlayResult;
-            // Find common lead and select
+        if (this.tricks.length > 10) {
+            // No robot here just use DDS
+            // Find all elements with the maximum score
+            // Find the maximum score
+            const maxScore = result1.plays.reduce((max, current) => {
+                return Math.max(max, current.score);
+            }, -Infinity);
+            // Filter elements with the maximum score
+            const maxScoreElements = result1.plays.filter((play) => play.score === maxScore);
+            let rank = maxScoreElements[0].rank
+            if (maxScoreElements[0].equals.length > 0) {
+                rank = maxScoreElements[0].equals[maxScoreElements[0].equals.length - 1]
+            }
+            console.log("Playing: ", rank + maxScoreElements[0].suit, " Score: ", "DDS");
+            const myCard = new Card(maxScoreElements[0].suit as Suit, textToRank(rank));
+            return myCard;
         }
+
+        let nnRes = await this.getRobotPlay();
+
+
+        //Now find the card to this.play
+        
         // Find all elements with the maximum score
         // Find the maximum score
         const maxScore = result1.plays.reduce((max, current) => {
@@ -250,6 +271,11 @@ export class Board {
         // Filter elements with the maximum score
         const maxScoreElements = result1.plays.filter((play) => play.score === maxScore);
 
+        let newArray = this.mergeResults(maxScoreElements, nnRes[0]);
+
+        const highestScoreItem = this.findItemWithHighestBScore(newArray);
+        //console.log(highestScoreItem)
+        console.log("Playing: ", highestScoreItem.rank + highestScoreItem.suit, " Score: ", highestScoreItem.B_Score.toFixed(3));
         // Different rules depending on suit or NT
         // Rules for partscore
         // Rules for game
@@ -284,6 +310,92 @@ export class Board {
         return myCard;
     }
  
+    // INterface for using the robot
+    // 0: 32  player hand
+    // 32: 64  seen hand(dummy, or declarer if we create data for dummy)
+    // 64: 96  last trick card 0
+    // 96: 128 last trick card 1
+    // 128: 160 last trick card 2
+    // 160: 192 last trick card 3
+    // 192: 224 this trick lho card
+    // 224: 256 this trick pard card
+    // 256: 288 this trick rho card
+    // 288: 292 last trick lead player index one - hot
+    // 292 level
+    // 293: 298 strain one hot N, S, H, D, C
+
+    private async getRobotPlay() {
+        const x: number[] = [];
+        let hand = this.bot.parseHandF(32)(this.handToPBN(this.player));
+        x.push(...hand);
+        let ben = this.bot.declarer;
+        if (this.getDeclarer() == this.player) {
+            let dummyhand = this.bot.parseHandF(32)(this.handToPBN(this.getDummy()));
+            x.push(...dummyhand);
+            ben = this.bot.declarer;
+        }
+        if (this.getDummy() == this.player) {
+            let declarerhand = this.bot.parseHandF(32)(this.handToPBN(this.getDeclarer()));
+            x.push(...declarerhand);
+            ben = this.bot.dummy;
+        }
+        if (this.getRighty() == this.player) {
+            let dummyhand = this.bot.parseHandF(32)(this.handToPBN(this.getDummy()));
+            x.push(...dummyhand);
+            ben = this.bot.righty;
+        }
+        if (this.getLefty() == this.player) {
+            let dummyhand = this.bot.parseHandF(32)(this.handToPBN(this.getDummy()));
+            x.push(...dummyhand);
+            ben = this.bot.lefty;
+        }
+        for (let i = 64; i < 298; i++) {
+            x[i] = 0;
+        }
+        x[292] = this.bot.getLevelInt(this.contract);
+        // Previous trick
+        if (this.tricks.length > 0) {
+            for (let i = 0; i < 4; i++) {
+                let element = this.tricks[this.tricks.length - 1].plays[i];
+                let index = this.bot.encodeCard(element.card.toString());
+                x[192 + index + (i * 32)] = 1;
+            }
+        }
+        // This trick
+        if (this.plays.length > 0) {
+            let startIndex = 192; // Initialize the starting index
+            for (let i = this.plays.length - 1; i >= 0; i--) {
+                x[startIndex + this.bot.card52to32(this.bot.encodeCard(this.plays[i].card.toString()))] = 1; // Set the value to 1
+                startIndex += 32; // Increment the starting index for the next play
+            }
+            // if (this.plays.length == 3) {
+            //     x[192 + this.bot.encodeCard(this.plays[2].card.toString())]
+            //     x[192 + 32 + this.bot.encodeCard(this.plays[1].card.toString())]
+            //     x[192 + 64 + this.bot.encodeCard(this.plays[0].card.toString())]
+            // }
+            // // RHO + Partner
+            // if (this.plays.length == 2) {
+            //     x[192 + 32 + this.bot.encodeCard(this.plays[1].card.toString())]
+            //     x[192 + 64 + this.bot.encodeCard(this.plays[0].card.toString())]
+            // }
+            // // Only RHO
+            // if (this.plays.length == 1) {
+            //     x[192 + 64 +this.bot.encodeCard(this.plays[0].card.toString())]
+            // }
+        }
+        // last trick lead player
+        if (this.tricks.length > 0) {
+            // The leader of each trick must be relative to the player, clockwise
+            let lead = (4 - this.plays.length) % 4;
+            x[288 + lead] = 1;
+        }
+
+        x[293 + this.bot.getStrainInt(this.contract)] = 1;
+        ben.sequence.push(x);
+        let nnRes = await ben.predict(ben.sequence);
+        return nnRes[0];
+    }
+
     findItemWithHighestBScore(arr: any[]): any {
         let highestScore = -Infinity;
         let resultItem = null;
@@ -294,14 +406,12 @@ export class Board {
                 resultItem = item;
             }
         }
-
         return resultItem;
     }
     // Interface to dds.js
     async openingLead(): Promise<Card> {
         let played = this.playedCards()
         const result1 = (window as any).getNextPlay(this.lastTrickPBN, this.strain, played) as NextPlayResult;
-        console.log(result1)
 
         const maxScore = result1.plays.reduce((max, current) => {
             return Math.max(max, current.score);
@@ -309,6 +419,19 @@ export class Board {
 
         // Filter elements with the maximum score
         const maxScoreElements = result1.plays.filter((play) => play.score === maxScore);
+        let nnRes = await this.getRobotOpeningLead(maxScoreElements);
+        let xxx = await this.getRobotPlay();
+        let newArray =this.mergeResults(maxScoreElements, nnRes);
+
+        const highestScoreItem = this.findItemWithHighestBScore(newArray);
+        //console.log(highestScoreItem)
+        console.log("Playing: ", highestScoreItem.rank + highestScoreItem.suit, " Score: ", highestScoreItem.B_Score.toFixed(3));
+
+        const myCard = new Card(highestScoreItem.suit as Suit, textToRank(highestScoreItem.rank));
+        return myCard;
+    }
+
+    private async getRobotOpeningLead(maxScoreElements: { suit: string; rank: string; equals: string[]; score: number; }[]) {
         const x: number[] = new Array(42).fill(0);
         x[0] = parseInt(this.contract[0], 10);
         x[1 + this.bot.getStrainInt(this.contract)] = 1;
@@ -316,49 +439,45 @@ export class Board {
         x[7] = /XX/.test(this.contract) ? 1 : 0;
 
         if (this.player == Player.N || this.player == Player.S) {
-            x[8] = ["NS", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0
-            x[9] = ["EW", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0
+            x[8] = ["NS", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0;
+            x[9] = ["EW", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0;
         } else {
-            x[8] = ["EW", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0
-            x[9] = ["NS", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0
+            x[8] = ["EW", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0;
+            x[9] = ["NS", "All"].indexOf(this.vulnerability) > -1 ? 1 : 0;
         }
 
         let hand = this.bot.parseHandF(32)(this.handToPBN(this.player));
-        x.splice(10,32, ...hand)
-        let dummyhand = this.handToPBN(this.getDummy())
-        let partnerhand = this.handToPBN(this.getPartner())
-        let declarerhand = this.handToPBN(this.getDeclarer())
-        let B = this.bot.binary_hcp_shape([dummyhand, partnerhand, declarerhand])
+        x.splice(10, 32, ...hand);
+        let dummyhand = this.handToPBN(this.getDummy());
+        let rightyhand = this.handToPBN(this.getRighty());
+        let declarerhand = this.handToPBN(this.getDeclarer());
+        let B = this.bot.binary_hcp_shape([dummyhand, rightyhand, declarerhand]);
 
-        let resultBen = await this.bot.openingleader.predict(x, B)
-        console.log(resultBen[0])
-        let r = resultBen[0]
-        console.log(maxScoreElements)
-        const newArray: { suit: string; rank: string;}[] = [];
+        let resultBen = await this.bot.openingleader.predict(x, B);
+        let nnRes = resultBen[0];
+        return nnRes;
+    }
 
+    private mergeResults(maxScoreElements: { suit: string; rank: string; equals: string[]; score: number; }[], rnn: number[]) {
+
+        const newArray: { suit: string; rank: string; }[] = [];
         maxScoreElements.forEach(item => {
             const { equals, score, ...rest } = item;
-            const newItem = { ...rest, B_Score: -1 }
-            newItem.B_Score = r[this.bot.card52to32(this.bot.encodeCard(newItem.suit+newItem.rank))]
+            const newItem = { ...rest, B_Score: -1 };
+            newItem.B_Score = rnn[this.bot.card52to32(this.bot.encodeCard(newItem.suit + newItem.rank))];
             newArray.push(newItem);
 
             if (item.equals.length > 0) {
                 item.equals.forEach((equal, index) => {
                     const newItem = { ...rest, B_Score: -1 };
                     newItem.rank = (parseInt(newItem.rank) - 1).toString();
-                    newItem.B_Score = r[this.bot.card52to32(this.bot.encodeCard(newItem.suit + newItem.rank))]
+                    newItem.B_Score = rnn[this.bot.card52to32(this.bot.encodeCard(newItem.suit + newItem.rank))];
                     newArray.push(newItem);
                 });
             }
         });
 
-        console.log(newArray)
-
-        const highestScoreItem = this.findItemWithHighestBScore(newArray);
-        console.log(highestScoreItem);
-
-        const myCard = new Card(highestScoreItem.suit as Suit, textToRank(highestScoreItem.rank));
-        return myCard;
+        return newArray;
     }
 
     // Returns an array of { card, player } objects.
@@ -392,7 +511,7 @@ export class Board {
         return getNextPlayer(getNextPlayer(getNextPlayer(this.firstPlayer)));
     }
 
-    getPartner(): Player {
+    getRighty(): Player {
         return getNextPlayer(getNextPlayer(this.firstPlayer));
     }
 
@@ -400,8 +519,13 @@ export class Board {
         return getNextPlayer(this.firstPlayer);
     }
 
+    getLefty(): Player {
+        return this.firstPlayer;
+    }
+
     // Undo the last play
     undo() {
+        // Need to remove sequences from the robot
         let prevTricks = this.tricks.length,
             plays = this.plays.length;
 

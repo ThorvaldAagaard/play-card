@@ -43,41 +43,41 @@ enum Suit {
     C = 'C'
 };
 
-enum Player {
+enum PlayerEnum {
     N = 'N',
     S = 'S',
     E = 'E',
     W = 'W'
 }
 
-function charToPlayer(char: string): Player {
+function charToPlayer(char: string): PlayerEnum {
     switch (char) {
         case 'N':
-            return Player.N;
+            return PlayerEnum.N;
         case 'S':
-            return Player.S;
+            return PlayerEnum.S;
         case 'E':
-            return Player.E;
+            return PlayerEnum.E;
         case 'W':
-            return Player.W;
+            return PlayerEnum.W;
         default:
             throw new Error(`Invalid player: ${char}`);
     }
 }
 
-function getNextPlayer(currentPlayer: Player): Player {
+function getNextPlayer(currentPlayer: PlayerEnum): PlayerEnum {
     switch (currentPlayer) {
-        case Player.N:
-            return Player.E;
-        case Player.E:
-            return Player.S;
-        case Player.S:
-            return Player.W;
-        case Player.W:
-            return Player.N;
+        case PlayerEnum.N:
+            return PlayerEnum.E;
+        case PlayerEnum.E:
+            return PlayerEnum.S;
+        case PlayerEnum.S:
+            return PlayerEnum.W;
+        case PlayerEnum.W:
+            return PlayerEnum.N;
         default:
             throw new Error('Invalid player');
     }
 }
 
-export { Suit, CardRank, Player, getNextPlayer, charToPlayer };
+export { Suit, CardRank, PlayerEnum as Player, getNextPlayer, charToPlayer };

@@ -1,14 +1,57 @@
+import { Bidder } from "./bidding";
+import { BidInfo } from "./bidinfo";
+import { LeadSingleDummy } from "./leadsingledummy";
 import { Leader } from "./leader";
+import { BatchPlayer } from "./player";
 
 export class Bot {
-    openingleader: any;
+    openingleader: Leader;
+    bidinfo: BidInfo;
+    singledummy: LeadSingleDummy;
+    north: Bidder;
+    east: Bidder;
+    south: Bidder;
+    west: Bidder;
+    dummy: BatchPlayer;
+    declarer: BatchPlayer;
+    lefty: BatchPlayer;
+    righty: BatchPlayer;
 
     constructor() {
-        this.openingleader = new Leader('../models/model.json');
+        this.openingleader = new Leader('jslead/model.json');
+        this.singledummy = new LeadSingleDummy('jssingle/model.json')
+        this.north = new Bidder("North", 'jsbidding/model.json')
+        this.east = new Bidder("North", 'jsbidding/model.json')
+        this.south = new Bidder("North", 'jsbidding/model.json')
+        this.west = new Bidder("North", 'jsbidding/model.json')
+        this.bidinfo = new BidInfo('jsbinfo/model.json')
+        this.dummy = new BatchPlayer("Dummy", 'jsdummy/model.json')
+        this.declarer = new BatchPlayer("Declarer", 'jsdummy/model.json')
+        this.lefty = new BatchPlayer("Lefty", 'jsdummy/model.json')
+        this.righty = new BatchPlayer("Righty", 'jsdummy/model.json')
     }
 
-    getStrainInt(contract: string) {
+    async initializeModels() {
+        await this.openingleader.initialize();
+        await this.singledummy.initialize();
+        await this.north.initialize();
+        await this.east.initialize();
+        await this.south.initialize();
+        await this.west.initialize();
+        await this.bidinfo.initialize();
+        await this.dummy.initialize();
+        await this.declarer.initialize();
+        await this.lefty.initialize();
+        await this.righty.initialize();
+    }
+
+
+    getStrainInt(contract: string): number {
         return 'NSHDC'.indexOf(contract[1]);
+    }
+
+    getLevelInt(contract: string): number {
+        return parseInt(contract[0]);
     }
 
     card32to52(c32: number): number {
@@ -55,7 +98,6 @@ export class Bot {
             return x;
         };
     }
-
 
     getCardIndex(card: string, nCards: number): number {
         if (nCards % 4 !== 0) {
